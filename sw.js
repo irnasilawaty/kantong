@@ -1,5 +1,5 @@
 // Offline cache: serve the app from the device, refresh it in the background when online.
-const CACHE = 'kantong-v7';
+const CACHE = 'kantong-v8';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'tessdata.projectnaptha.com'];
 // Receipt reader files never change for a pinned version, so they can be kept forever.

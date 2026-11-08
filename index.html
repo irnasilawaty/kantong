@@ -517,7 +517,8 @@ body.welcoming .top,body.welcoming .bnav,body.welcoming .side{visibility:hidden}
 </div>
 <nav class="bnav" id="bnav"></nav>
 <div class="toast" id="toast" role="status"></div>
-<input type="file" id="scanInput" accept="image/*" hidden>
+<input type="file" id="scanCam" accept="image/*" capture="environment" hidden>
+<input type="file" id="scanFile" accept="image/*,application/octet-stream" hidden>
 
 <script>
 (() => {
@@ -602,6 +603,7 @@ const I = {
   gold: '<path d="M2 20l2.5-6h7L14 20z"/><path d="M10 20l2.5-6h7L22 20z"/><path d="M6 14l2.5-6h7L18 14z"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>',
   scan: '<path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M7 12h10"/>',
+  camera: '<path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="4"/>',
 };
 const svg = (n, s = 22, w = 1.9) => I[n] ? `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>` : '';
 const tile = (icon, color, cls = '', s = 20) => `<span class="ic ${cls}" style="--c:${color}">${icon && icon.startsWith('i:') ? svg(icon.slice(2), s, 2) : `<span class="emo">${esc(icon || '•')}</span>`}</span>`;
@@ -1404,7 +1406,7 @@ function txSheet(t, presetType, pre) {
   let to = t && M.acc[t.to] ? t.to : (S.accounts.find(a => a.id !== acc) || {}).id;
   const accOpts = sel => S.accounts.map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)} · ${a.currency}</option>`).join('');
   sheet(`${isEdit ? head('Edit transaction') : `<div class="sh-head"><h2>New transaction</h2><div class="tools"><button class="icon-btn" id="tScan" aria-label="Scan receipt" title="Scan receipt">${svg('scan', 18)}</button><button class="icon-btn" data-close aria-label="Close">${svg('x', 18)}</button></div></div>`}
-    ${pre ? `<div class="scan-note ${pre.amount ? '' : 'warn'}">${svg('receipt', 18)}${pre.amount ? 'Filled in from your receipt. Please check before saving.' : "Couldn't find the total. Please type the amount."}</div>` : ''}
+    ${pre ? `<div class="scan-note ${pre.amount && pre.date ? '' : 'warn'}">${svg('receipt', 18)}<span>${pre.amount ? 'Filled in from your receipt. Please check before saving.' : "Couldn't find the total. Please type the amount."}${pre.date ? '' : " Couldn't read the date, so today is used."}</span></div>` : ''}
     <div class="stack">
       <div class="seg" id="tType">${['expense', 'income', 'transfer'].map(v => `<button data-v="${v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}</div>
       <div><label class="amount" id="tAmtWrap"><span id="tSym"></span><input id="tAmt" inputmode="decimal" autocomplete="off" placeholder="0" aria-label="Amount"></label><div class="conv-hint" id="tHint"></div></div>
@@ -1511,9 +1513,17 @@ function loadOcr() {
   });
 }
 function startScan() {
-  const inp = $('#scanInput');
-  inp.value = '';
-  inp.click();
+  sheet(`${head('Scan receipt', tile('i:receipt', '#7B5CFF'))}
+    <div class="card list">
+      <button class="row" id="scCam">${tile('i:camera', '#F2649E', '', 18)}<span class="row-m"><b>Take a photo</b><small>Opens your camera</small></span><span class="chev">${svg('right', 18)}</span></button>
+      <button class="row" id="scFile">${tile('i:file', '#0EA5E9', '', 18)}<span class="row-m"><b>Choose from files</b><small>Pick a receipt saved on this device</small></span><span class="chev">${svg('right', 18)}</span></button>
+    </div>`,
+  (el, close) => {
+    // Must stay synchronous: browsers only open a picker straight from a tap.
+    const pick = id => { close(); const inp = $(id); inp.value = ''; inp.click(); };
+    el.querySelector('#scCam').onclick = () => pick('#scanCam');
+    el.querySelector('#scFile').onclick = () => pick('#scanFile');
+  });
 }
 async function prepImage(file) {
   const bmp = await createImageBitmap(file);
@@ -1599,7 +1609,12 @@ function findDate(text) {
     return age >= 0 && age < 400 ? s : null;
   };
   for (const m of text.matchAll(/(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/g)) { const r = ok(+m[1], +m[2], +m[3]); if (r) return r; }
-  for (const m of text.matchAll(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/g)) { const r = ok(+m[3], +m[2], +m[1]) || ok(+m[3], +m[1], +m[2]); if (r) return r; }
+  for (const m of text.matchAll(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/g)) {
+    // The reader often sees a leading 0 as 8 or 9, so a day like 87 means 07.
+    const day = +m[1] > 31 ? +m[1] % 10 : +m[1];
+    const r = ok(+m[3], +m[2], day) || ok(+m[3], +m[1], +m[2]);
+    if (r) return r;
+  }
   const MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, mei: 5, jun: 6, jul: 7, aug: 8, agu: 8, agt: 8, sep: 9, oct: 10, okt: 10, nov: 11, dec: 12, des: 12 };
   for (const m of text.matchAll(/(\d{1,2})[\s\-]*([A-Za-z]{3})[a-z]*\.?[\s\-,]*(\d{2,4})/g)) {
     const mo = MON[m[2].toLowerCase()];
@@ -2162,7 +2177,7 @@ document.addEventListener('keydown', e => {
   if (!S || sheets.length || e.ctrlKey || e.metaKey || e.altKey || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
   if (e.key === 'n' || e.key === 'N') { e.preventDefault(); txSheet(); }
 });
-$('#scanInput').addEventListener('change', e => { const f = e.target.files[0]; if (f && S) scanReceipt(f); });
+for (const id of ['#scanCam', '#scanFile']) $(id).addEventListener('change', e => { const f = e.target.files[0]; if (f && S) scanReceipt(f); });
 const liveUpdate = () => refreshMarket().then(c => { if (c && S && !sheets.length && ui.view !== 'activity') render(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !S) return;
