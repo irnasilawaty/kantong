@@ -637,9 +637,10 @@ function advance(s, freq, day) {
 }
 const num = s => parseFloat(String(s).replace(/,/g, '')) || 0;
 const roundC = (n, c) => { const f = 10 ** CUR[c].dec; return Math.round(n * f) / f; };
-const plain = (n, c) => n ? roundC(n, c).toLocaleString('en-US', { maximumFractionDigits: CUR[c].dec }) : '';
+const plain = (n, c) => n ? (Math.round(n * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) : '';
 function money(n, c = S.base, o = {}) {
-  const d = CUR[c].dec, neg = n < 0 && Math.abs(n) >= 0.5 / 10 ** d, a = Math.abs(n);
+  const raw = Math.abs(n), cents = !CUR[c].dec && o.exact && Math.abs(raw - Math.round(raw)) >= 0.005;
+  const d = cents ? 2 : CUR[c].dec, neg = n < 0 && raw >= 0.5 / 10 ** d, a = raw;
   const s = o.compact && a >= 10000
     ? new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(a)
     : a.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -653,10 +654,17 @@ function niceRound(v, c) {
   return Math.max(step, Math.round(v / step) * step);
 }
 function fmtInput(el, c) {
-  const dec = CUR[c].dec;
-  let v = el.value.replace(/[^\d.]/g, '');
-  if (!dec) v = v.replace(/\./g, '');
-  else { const i = v.indexOf('.'); if (i >= 0) v = v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, '').slice(0, dec); }
+  const whole = !CUR[c].dec;
+  let typed = el.value.trim();
+  // Our own formatting never ends in a comma, so a trailing one is the user's decimal key.
+  if (typed.endsWith(',') && !typed.includes('.')) typed = typed.slice(0, -1) + '.';
+  let v = typed.replace(/[^\d.]/g, '');
+  const i = v.indexOf('.');
+  if (i >= 0) {
+    const frac = v.slice(i + 1).replace(/\./g, '');
+    // In IDR and JPY, 25.000 means twenty-five thousand.
+    v = whole && frac.length >= 3 ? v.slice(0, i) + frac : v.slice(0, i + 1) + frac.slice(0, 2);
+  }
   let [a, b] = v.split('.');
   a = a.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   el.value = b !== undefined ? (a || '0') + '.' + b : a;
@@ -946,11 +954,11 @@ function txRow(t) {
   let k, title, sub, amt, cls = '';
   if (t.type === 'transfer') {
     k = TRANSFER; title = t.note || 'Transfer';
-    sub = `${esc(accName(t.account))} → ${esc(accName(t.to))}`; amt = money(t.amount, c); cls = 'muted';
+    sub = `${esc(accName(t.account))} → ${esc(accName(t.to))}`; amt = money(t.amount, c, { exact: true }); cls = 'muted';
   } else {
     k = catOf(t.cat); title = t.note || k.name;
     sub = t.note ? `${esc(k.name)} · ${esc(accName(t.account))}` : esc(accName(t.account));
-    if (t.type === 'income') { amt = money(t.amount, c, { sign: true }); cls = 'pos'; } else amt = money(-t.amount, c);
+    if (t.type === 'income') { amt = money(t.amount, c, { sign: true, exact: true }); cls = 'pos'; } else amt = money(-t.amount, c, { exact: true });
   }
   const alt = c !== S.base ? `<small>≈ ${money(conv(t.amount, c))}</small>` : '';
   return `<button class="tx" data-a="tx" data-id="${t.id}">${tile(k.icon, k.color)}
@@ -1001,7 +1009,7 @@ function accCard(a, bal) {
   const v = bal[a.id] || 0;
   return `<button class="acard t-${a.type in ACC_TYPES ? a.type : 'cash'}" data-a="acc" data-id="${a.id}">
     <div class="ac-top">${svg(accIcon(a), 22, 2)}<span class="ac-cur">${a.currency}</span></div>
-    <div><div class="ac-name">${esc(a.name)}</div><div class="ac-bal">${hidden(v, a.currency)}</div></div></button>`;
+    <div><div class="ac-name">${esc(a.name)}</div><div class="ac-bal">${hidden(v, a.currency, { exact: true })}</div></div></button>`;
 }
 
 function goldAccCard() {
@@ -1287,7 +1295,7 @@ function vMore() {
     <span class="tx-m"><b>${esc(S.prefs.name) || 'Add your name'}</b><small>${S.tx.length} transactions · ${S.accounts.length} accounts · on this device</small></span><span>${svg('right', 18)}</span></button>`;
   h += `<div class="set-h an">Accounts</div><div class="card list an">`;
   for (const a of S.accounts) {
-    h += `<button class="row" data-a="acc" data-id="${a.id}"><span class="ic t-${a.type in ACC_TYPES ? a.type : 'cash'}" style="background-image:none">${svg(accIcon(a), 20, 2)}</span><span class="row-m"><b>${esc(a.name)}</b><small>${ACC_TYPES[a.type]?.[1] || 'Account'} · ${a.currency}</small></span><span class="val">${hidden(bal[a.id] || 0, a.currency)}</span></button>`;
+    h += `<button class="row" data-a="acc" data-id="${a.id}"><span class="ic t-${a.type in ACC_TYPES ? a.type : 'cash'}" style="background-image:none">${svg(accIcon(a), 20, 2)}</span><span class="row-m"><b>${esc(a.name)}</b><small>${ACC_TYPES[a.type]?.[1] || 'Account'} · ${a.currency}</small></span><span class="val">${hidden(bal[a.id] || 0, a.currency, { exact: true })}</span></button>`;
   }
   const gt = goldTotals();
   h += `<button class="row" data-a="gold"><span class="ic t-gold" style="background-image:none">${svg('gold', 20, 2)}</span><span class="row-m"><b>Gold</b><small>${S.gold.length ? `${gt.grams.toLocaleString('en-US', { maximumFractionDigits: 3 })} g · live price` : 'Track gold at the live market price'}</small></span><span class="val">${S.gold.length ? hidden(gt.value) : ''}</span></button>`;
@@ -1474,7 +1482,7 @@ function txSheet(t, presetType, pre) {
       save(); close(); buzz();
       if (!isEdit && !date.startsWith(ui.month)) ui.month = date.slice(0, 7);
       processRecurring(); render();
-      toast(isEdit ? 'Saved' : type === 'expense' ? `Spent ${money(v, accCur(acc))}` : type === 'income' ? `Received ${money(v, accCur(acc))}` : 'Transfer added');
+      toast(isEdit ? 'Saved' : type === 'expense' ? `Spent ${money(v, accCur(acc), { exact: true })}` : type === 'income' ? `Received ${money(v, accCur(acc), { exact: true })}` : 'Transfer added');
     };
     if (isEdit) q('#tDel').onclick = () => { close(); delTx(t.id); };
     el.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') q('#tSave').click(); });
